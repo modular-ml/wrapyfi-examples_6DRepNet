@@ -22,6 +22,7 @@ from PIL import Image
 matplotlib.use('TkAgg')
 
 from wrapyfi.connect.wrapper import MiddlewareCommunicator, DEFAULT_COMMUNICATOR
+from wrapyfi_interfaces.templates.orientation import OrientationInterface
 from wrapyfi_interfaces.io.video.interface import VideoCapture, VideoCaptureReceiver
 from sixdrepnet.model import SixDRepNet
 from sixdrepnet import utils
@@ -63,8 +64,10 @@ def parse_args():
                         help="Port (topic) to publish head orientation")
     parser.add_argument("--orientation_mware", type=str, choices=MiddlewareCommunicator.get_communicators(),
                         help="Middleware to publish head orientation")
+
     args = parser.parse_args()
     return args
+
 
 transformations = transforms.Compose([transforms.Resize(224),
                                       transforms.CenterCrop(224),
