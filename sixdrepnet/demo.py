@@ -21,8 +21,18 @@ from matplotlib import pyplot as plt
 from PIL import Image
 matplotlib.use('TkAgg')
 
+from wrapyfi.connect.wrapper import MiddlewareCommunicator, DEFAULT_COMMUNICATOR
+from wrapyfi_interfaces.io.video.interface import VideoCapture, VideoCaptureReceiver
 from sixdrepnet.model import SixDRepNet
 from sixdrepnet import utils
+
+
+def str_or_int(arg):
+    try:
+        return int(arg)  # try convert to int
+    except ValueError:
+        return arg
+
 
 def parse_args():
     """Parse input arguments."""
@@ -32,18 +42,29 @@ def parse_args():
                         dest='gpu_id', help='GPU device id to use [0]',
                         default=0, type=int)
     parser.add_argument('--cam',
-                        dest='cam_id', help='Camera device id to use [0]',
-                        default=0, type=int)
+                        dest='cam_id', help="Camera device id to use [0]."
+                             "If none is selected, the default camera by the OS is used. "
+                             "If webcam is a string, this equates to the port (topic) name. e.g., /icub/cam/left",
+                        type=str_or_int, default="0")
+    parser.add_argument("--img_width", type=int, default=640, help="The captured image width")
+    parser.add_argument("--img_height", type=int, default=480, help="The captured image height")
     parser.add_argument('--snapshot',
                         dest='snapshot', help='Name of model snapshot.',
                         default='', type=str)
     parser.add_argument('--save_viz',
                         dest='save_viz', help='Save images with pose cube.',
                         default=False, type=bool)
-
+    parser.add_argument('--headless',
+                        dest='headless', action="store_true", help='Disable CV2 GUI',
+                        default=False)
+    parser.add_argument("--video_mware", type=str, choices=MiddlewareCommunicator.get_communicators(),
+                        help="Middleware for listening to video stream")
+    parser.add_argument("--orientation_port", type=str, default="",
+                        help="Port (topic) to publish head orientation")
+    parser.add_argument("--orientation_mware", type=str, choices=MiddlewareCommunicator.get_communicators(),
+                        help="Middleware to publish head orientation")
     args = parser.parse_args()
     return args
-
 
 transformations = transforms.Compose([transforms.Resize(224),
                                       transforms.CenterCrop(224),
@@ -78,7 +99,13 @@ if __name__ == '__main__':
     # Test the Model
     model.eval()  # Change model to 'eval' mode (BN uses moving mean/var).
 
-    cap = cv2.VideoCapture(cam)
+    # cap = VideoCapture(cam)
+    if args.video_mware:
+        video_device = VideoCaptureReceiver
+    else:
+        video_device = VideoCapture
+    cap = video_device(str(cam), headless=True, img_width=args.img_width, img_height=args.img_height,
+                       mware=args.video_mware if args.video_mware is not None else DEFAULT_COMMUNICATOR, multithreading=False)
 
     # Check if the webcam is opened correctly
     if not cap.isOpened():
