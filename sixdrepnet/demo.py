@@ -117,7 +117,9 @@ if __name__ == '__main__':
     with torch.no_grad():
         while True:
             ret, frame = cap.read()
-
+            if frame is None:
+                continue
+                
             faces = detector(frame)
 
             for box, landmarks, score in faces:
