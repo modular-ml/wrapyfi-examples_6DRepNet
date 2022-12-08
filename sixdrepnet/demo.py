@@ -47,8 +47,8 @@ def parse_args():
                              "If none is selected, the default camera by the OS is used. "
                              "If webcam is a string, this equates to the port (topic) name. e.g., /icub/cam/left",
                         type=str_or_int, default="0")
-    parser.add_argument("--img_width", type=int, default=640, help="The captured image width")
-    parser.add_argument("--img_height", type=int, default=480, help="The captured image height")
+    parser.add_argument("--img_width", type=int, default=320, help="The captured image width")
+    parser.add_argument("--img_height", type=int, default=240, help="The captured image height")
     parser.add_argument('--snapshot',
                         dest='snapshot', help='Name of model snapshot.',
                         default='', type=str)
@@ -109,6 +109,17 @@ if __name__ == '__main__':
         video_device = VideoCapture
     cap = video_device(str(cam), headless=True, img_width=args.img_width, img_height=args.img_height,
                        mware=args.video_mware if args.video_mware is not None else DEFAULT_COMMUNICATOR, multithreading=False)
+    
+    if args.orientation_mware:
+        # Extend when required: Broadcasting multiple faces detected can be achieved by creating a 
+        #    separate orientation interface for each face idx, and adding index to port name after the first like 
+        #    /control_interface/orientation_out for 1st and /control_interface/orientation_out_2 for 2nd and so on.
+        #    This takes place automatically below
+        orientation_broadcasters =  [OrientationInterface(
+            orientation_port_out=args.orientation_port, mware_out=args.orientation_mware,
+            orientation_port_in="")]
+    else:
+        orientation_broadcasters = []
 
     # Check if the webcam is opened correctly
     if not cap.isOpened():
@@ -122,7 +133,7 @@ if __name__ == '__main__':
                 
             faces = detector(frame)
 
-            for box, landmarks, score in faces:
+            for face_idx, (box, landmarks, score) in enumerate(faces):
 
                 # Print the location of each face in this image
                 if score < .95:
@@ -160,10 +171,21 @@ if __name__ == '__main__':
                 p_pred_deg = euler[:, 0].cpu()
                 y_pred_deg = euler[:, 1].cpu()
                 r_pred_deg = euler[:, 2].cpu()
-
-                #utils.draw_axis(frame, y_pred_deg, p_pred_deg, r_pred_deg, left+int(.5*(right-left)), top, size=100)
-                utils.plot_pose_cube(frame,  y_pred_deg, p_pred_deg, r_pred_deg, x_min + int(.5*(
-                    x_max-x_min)), y_min + int(.5*(y_max-y_min)), size=bbox_width)
-
-            cv2.imshow("Demo", frame)
-            cv2.waitKey(5)
+                
+                # broadcast orientation to middleware
+                if args.orientation_mware:
+                    if face_idx >= len(orientation_broadcasters):
+                        # Extend when required: Broadcasting multiple faces detected can be achieved by creating a 
+                        #    separate orientation interface for each face idx, and adding index to port name after the first like 
+                        #    /control_interface/orientation_out for 1st and /control_interface/orientation_out_2 for 2nd and so on
+                        orientation_broadcasters.append(OrientationInterface(orientation_port_out=args.orientation_port + "_" + str(face_idx+1), mware_out=args.orientation_mware, orientation_port_in=""))
+                    orientation_broadcasters[face_idx].transmit_orientation(quaternion=False, order="xyz", pitch=p_pred_deg, roll=r_pred_deg, yaw=y_pred_deg, speed=None)
+                if not args.headless:
+                    #utils.draw_axis(frame, y_pred_deg, p_pred_deg, r_pred_deg, left+int(.5*(right-left)), top, size=100)
+                    utils.plot_pose_cube(frame,  y_pred_deg, p_pred_deg, r_pred_deg, x_min + int(.5*(
+                        x_max-x_min)), y_min + int(.5*(y_max-y_min)), size=bbox_width)
+            if not args.headless:
+                cv2.imshow("Demo", frame)
+                cv2.waitKey(5)
+            else:
+                time.sleep(0.005)
