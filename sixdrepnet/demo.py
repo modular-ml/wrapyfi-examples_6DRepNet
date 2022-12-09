@@ -168,9 +168,9 @@ if __name__ == '__main__':
 
                 euler = utils.compute_euler_angles_from_rotation_matrices(
                     R_pred)*180/np.pi
-                p_pred_deg = euler[:, 0].cpu()
-                y_pred_deg = euler[:, 1].cpu()
-                r_pred_deg = euler[:, 2].cpu()
+                p_pred_deg = euler[:, 0].cpu().item()
+                y_pred_deg = euler[:, 1].cpu().item()
+                r_pred_deg = euler[:, 2].cpu().item()
                 
                 # broadcast orientation to middleware
                 if args.orientation_mware:
