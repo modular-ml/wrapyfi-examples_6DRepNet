@@ -180,7 +180,10 @@ if __name__ == '__main__':
                         #    /control_interface/orientation_out for 1st and /control_interface/orientation_out_2 for 2nd and so on
                         orientation_broadcasters.append(OrientationInterface(orientation_port_out=args.orientation_port + "_" + str(face_idx+1), mware_out=args.orientation_mware, orientation_port_in=""))
                     # TODO (fabawi): _mware and orientation_port should have been updated during instantiation and don't need to be provided again
-                    orientation, = orientation_broadcasters[face_idx].transmit_orientation(quaternion=False, order="xyz", pitch=p_pred_deg, roll=r_pred_deg, yaw=y_pred_deg, speed=None, _mware=args.orientation_mware, orientation_port=args.orientation_port)
+                    if face_idx == 0:
+                        orientation, = orientation_broadcasters[face_idx].transmit_orientation(quaternion=False, order="xyz", pitch=p_pred_deg, roll=r_pred_deg, yaw=y_pred_deg, speed=None, _mware=args.orientation_mware, orientation_port=args.orientation_port)
+                    else:
+                        orientation, = orientation_broadcasters[face_idx].transmit_orientation(quaternion=False, order="xyz", pitch=p_pred_deg, roll=r_pred_deg, yaw=y_pred_deg, speed=None, _mware=args.orientation_mware, orientation_port=args.orientation_port + "_" + str(face_idx+1))
                 if not args.headless:
                     #utils.draw_axis(frame, y_pred_deg, p_pred_deg, r_pred_deg, left+int(.5*(right-left)), top, size=100)
                     utils.plot_pose_cube(frame,  y_pred_deg, p_pred_deg, r_pred_deg, x_min + int(.5*(
