@@ -60,10 +60,15 @@ def parse_args():
                         default=False)
     parser.add_argument("--video_mware", type=str, choices=MiddlewareCommunicator.get_communicators(),
                         help="Middleware for listening to video stream")
-    parser.add_argument("--orientation_port", type=str, default="",
+    parser.add_argument("--orientation_coordinates_port", type=str, default="",
                         help="Port (topic) to publish head orientation")
+    parser.add_argument("--baseline_orientation_coordinates_port", type=str, default="",
+                        help="The port (topic) name used for acquiring baseline orientation coordinates from an "
+                             "external source to plot against predicted head orientation")
     parser.add_argument("--orientation_mware", type=str, choices=MiddlewareCommunicator.get_communicators(),
                         help="Middleware to publish head orientation")
+    parser.add_argument("--baseline_orientation_mware", type=str, choices=MiddlewareCommunicator.get_communicators(),
+                        help="Middleware to receive baseline orientation from an external source")
 
     args = parser.parse_args()
     return args
@@ -110,34 +115,57 @@ if __name__ == '__main__':
     cap = video_device(str(cam), headless=True, img_width=args.img_width, img_height=args.img_height,
                        mware=args.video_mware if args.video_mware is not None else DEFAULT_COMMUNICATOR, multithreading=False)
     
-    if args.orientation_mware:
-        # Extend when required: Broadcasting multiple faces detected can be achieved by creating a 
-        #    separate orientation interface for each face idx, and adding index to port name after the first like 
+    if args.orientation_coordinates_port:
+        # Extend when required: Broadcasting multiple faces detected can be achieved by creating a
+        #    separate orientation interface for each face idx, and adding index to port name after the first like
         #    /control_interface/orientation_out for 1st and /control_interface/orientation_out_2 for 2nd and so on.
         #    This takes place automatically below
-        orientation_broadcasters =  [OrientationInterface(
-            orientation_port_out=args.orientation_port, mware_out=args.orientation_mware,
-            orientation_port_in="")]
+        orientation_broadcasters = [OrientationInterface(
+            orientation_coordinates_port_out=args.orientation_coordinates_port, mware_out=args.orientation_mware,
+            orientation_coordinates_port_in="")]
     else:
         orientation_broadcasters = []
+
+    if args.baseline_orientation_coordinates_port:
+        baseline_orientation_listener = OrientationInterface(
+            orientation_coordinates_port_out="",
+            orientation_coordinates_port_in=args.baseline_orientation_coordinates_port, mware_in=args.baseline_orientation_mware)
+    else:
+        baseline_orientation_listener = None
 
     # Check if the webcam is opened correctly
     if not cap.isOpened():
         raise IOError("Cannot open webcam")
 
+    prev_faces = []
+    prev_sensor_data = None
     with torch.no_grad():
         while True:
             ret, frame = cap.read()
             if frame is None:
                 continue
-                
-            faces = detector(frame)
 
-            for face_idx, (box, landmarks, score) in enumerate(faces):
+            # detect faces
+            faces = detector(frame)
+            if faces and np.any(np.array(faces)[:, 2]) > 0.95:
+                prev_faces = faces.copy()
+                new_face_captured = True
+            else:
+                new_face_captured = False
+
+            for face_idx, (box, landmarks, score) in enumerate(prev_faces):
 
                 # Print the location of each face in this image
                 if score < .95:
-                    continue
+                    skip_detection = True
+                    skip_sensor = True
+                else:
+                    if new_face_captured:
+                        skip_detection = False
+                    else:
+                        skip_detection = True
+                    skip_sensor = False
+
                 x_min = int(box[0])
                 y_min = int(box[1])
                 x_max = int(box[2])
@@ -150,44 +178,59 @@ if __name__ == '__main__':
                 x_max = x_max+int(0.2*bbox_height)
                 y_max = y_max+int(0.2*bbox_width)
 
-                img = frame[y_min:y_max, x_min:x_max]
-                img = Image.fromarray(img)
-                img = img.convert('RGB')
-                img = transformations(img)
-
-                img = torch.Tensor(img[None, :]).cuda(gpu)
-
                 c = cv2.waitKey(1)
                 if c == 27:
                     break
 
                 start = time.time()
-                R_pred = model(img)
-                end = time.time()
-                print('Head pose estimation: %2f ms' % ((end - start)*1000.))
+                if not skip_detection:
+                    img = frame[y_min:y_max, x_min:x_max]
+                    img = Image.fromarray(img)
+                    img = img.convert('RGB')
+                    img = transformations(img)
 
-                euler = utils.compute_euler_angles_from_rotation_matrices(
-                    R_pred)*180/np.pi
-                p_pred_deg = euler[:, 0].cpu().item()
-                y_pred_deg = euler[:, 1].cpu().item()
-                r_pred_deg = euler[:, 2].cpu().item()
-                
-                # broadcast orientation to middleware
-                if args.orientation_mware:
-                    if face_idx >= len(orientation_broadcasters):
-                        # Extend when required: Broadcasting multiple faces detected can be achieved by creating a 
-                        #    separate orientation interface for each face idx, and adding index to port name after the first like 
-                        #    /control_interface/orientation_out for 1st and /control_interface/orientation_out_2 for 2nd and so on
-                        orientation_broadcasters.append(OrientationInterface(orientation_port_out=args.orientation_port + "_" + str(face_idx+1), mware_out=args.orientation_mware, orientation_port_in=""))
-                    # TODO (fabawi): _mware and orientation_port should have been updated during instantiation and don't need to be provided again
-                    if face_idx == 0:
-                        orientation, = orientation_broadcasters[face_idx].transmit_orientation(quaternion=False, order="xyz", pitch=p_pred_deg, roll=r_pred_deg, yaw=y_pred_deg, speed=None, _mware=args.orientation_mware, orientation_port=args.orientation_port)
-                    else:
-                        orientation, = orientation_broadcasters[face_idx].transmit_orientation(quaternion=False, order="xyz", pitch=p_pred_deg, roll=r_pred_deg, yaw=y_pred_deg, speed=None, _mware=args.orientation_mware, orientation_port=args.orientation_port + "_" + str(face_idx+1))
-                if not args.headless:
-                    #utils.draw_axis(frame, y_pred_deg, p_pred_deg, r_pred_deg, left+int(.5*(right-left)), top, size=100)
-                    utils.plot_pose_cube(frame,  y_pred_deg, p_pred_deg, r_pred_deg, x_min + int(.5*(
-                        x_max-x_min)), y_min + int(.5*(y_max-y_min)), size=bbox_width)
+                    img = torch.Tensor(img[None, :]).cuda(gpu)
+
+                    R_pred = model(img)
+                    end = time.time()
+                    print('Head pose estimation: %2f ms' % ((end - start)*1000.))
+
+                    euler = utils.compute_euler_angles_from_rotation_matrices(
+                        R_pred)*180/np.pi
+                    p_pred_deg = euler[:, 0].cpu().item()
+                    y_pred_deg = euler[:, 1].cpu().item()
+                    r_pred_deg = euler[:, 2].cpu().item()
+
+                    # broadcast orientation to middleware
+                    if args.orientation_mware:
+                        if face_idx >= len(orientation_broadcasters):
+                            # Extend when required: Broadcasting multiple faces detected can be achieved by creating a
+                            #    separate orientation interface for each face idx, and adding index to port name after the first like
+                            #    /control_interface/orientation_out for 1st and /control_interface/orientation_out_2 for 2nd and so on
+                            orientation_broadcasters.append(OrientationInterface(orientation_coordinates_port_out=args.orientation_coordinates_port + "_" + str(face_idx+1), mware_out=args.orientation_mware, orientation_coordinates_port_in=""))
+                        # TODO (fabawi): _mware and orientation_coordinates_port should have been updated during instantiation and don't need to be provided again
+                        if face_idx == 0:
+                            orientation, = orientation_broadcasters[face_idx].transmit_orientation(quaternion=False, order="xyz", pitch=p_pred_deg, roll=r_pred_deg, yaw=y_pred_deg, speed=None, _mware=args.orientation_mware, orientation_coordinates_port=args.orientation_coordinates_port)
+                        else:
+                            orientation, = orientation_broadcasters[face_idx].transmit_orientation(quaternion=False, order="xyz", pitch=p_pred_deg, roll=r_pred_deg, yaw=y_pred_deg, speed=None, _mware=args.orientation_mware, orientation_coordinates_port=args.orientation_coordinates_port + "_" + str(face_idx+1))
+                    if not args.headless:
+                        #utils.draw_axis(frame, y_pred_deg, p_pred_deg, r_pred_deg, left+int(.5*(right-left)), top, size=100)
+                        utils.plot_pose_cube(frame,  y_pred_deg, p_pred_deg, r_pred_deg, x_min + int(.5*(
+                            x_max-x_min)), y_min + int(.5*(y_max-y_min)), size=bbox_width)
+
+                if baseline_orientation_listener is not None and not skip_sensor:
+                    sensor_data, = baseline_orientation_listener.receive_orientation(
+                        orientation_coordinates_port=args.baseline_orientation_coordinates_port, _mware=args.baseline_orientation_mware)
+                    if sensor_data is not None:
+                        prev_sensor_data = sensor_data
+                    if prev_sensor_data is not None:
+                        p_imu_deg = (prev_sensor_data["pitch"] - 180)
+                        y_imu_deg = -(prev_sensor_data["yaw"] - 180)
+                        r_imu_deg = (prev_sensor_data["roll"])
+                        if not args.headless:
+                            utils.draw_axis(frame, y_imu_deg, p_imu_deg, r_imu_deg, x_min + int(.5 * (x_max - x_min)),
+                                            y_min + int(.5 * (y_max - y_min)), size=100)
+
             if not args.headless:
                 cv2.imshow("Demo", frame)
                 cv2.waitKey(5)
