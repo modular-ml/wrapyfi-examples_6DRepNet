@@ -58,6 +58,9 @@ def parse_args():
     parser.add_argument('--headless',
                         dest='headless', action="store_true", help='Disable CV2 GUI',
                         default=False)
+    parser.add_argument('--jpg',
+                        dest='jpg', action="store_true", help='Receive JPG images when --cam is a port topic and --video_mware is provided',
+                        default=False)
     parser.add_argument("--video_mware", type=str, choices=MiddlewareCommunicator.get_communicators(),
                         help="Middleware for listening to video stream")
     parser.add_argument("--orientation_coordinates_port", type=str, default="",
@@ -113,7 +116,7 @@ if __name__ == '__main__':
     else:
         video_device = VideoCapture
     cap = video_device(str(cam), headless=True, img_width=args.img_width, img_height=args.img_height,
-                       mware=args.video_mware if args.video_mware is not None else DEFAULT_COMMUNICATOR, multithreading=False)
+                       mware=args.video_mware if args.video_mware is not None else DEFAULT_COMMUNICATOR, multithreading=False, jpg=args.jpg)
     
     if args.orientation_coordinates_port:
         # Extend when required: Broadcasting multiple faces detected can be achieved by creating a
